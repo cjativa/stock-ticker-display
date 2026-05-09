@@ -9,14 +9,12 @@
         --bg: #0a0a0a;
         --fg: #e0e0e0;
         --dim: #666;
+        --green: #22ff66;
       }
 
-      * {
-        box-sizing: border-box;
-      }
+      * { box-sizing: border-box; }
 
-      html,
-      body {
+      html, body {
         margin: 0;
         padding: 0;
         height: 100%;
@@ -34,6 +32,7 @@
         flex-direction: column;
         gap: 8px;
         padding: 16px;
+        padding-bottom: 60px; /* room for toggle buttons */
         overflow: hidden;
       }
 
@@ -41,15 +40,15 @@
         position: relative;
         padding: 10px 16px;
         border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         background: #000;
         box-shadow:
           inset 0 0 0 2px #1a1a1a,
           inset 0 0 0 4px #000,
-          0 20px 40px -10px rgba(0, 0, 0, 0.7),
-          0 12px 24px -12px rgba(0, 0, 0, 0.5);
+          0 20px 40px -10px rgba(0,0,0,0.7),
+          0 12px 24px -12px rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
 
       canvas {
@@ -58,6 +57,8 @@
         height: auto;
         image-rendering: auto;
       }
+
+      #single-panel { display: none; }
 
       .demo-notice {
         display: none;
@@ -70,18 +71,88 @@
         border-radius: 999px;
       }
 
-      .demo-notice strong {
-        color: #c5a35a;
+      .demo-notice strong { color: #c5a35a; }
+
+      /* ── View toggle buttons ── */
+      .view-toggle {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        z-index: 10;
       }
+
+      .toggle-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        border: 1px solid #333;
+        background: #111;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: border-color 0.15s, background 0.15s;
+      }
+
+      .toggle-btn:hover { border-color: #555; }
+
+      .toggle-btn.active {
+        border-color: var(--green);
+        background: #0a1a0f;
+      }
+
+      /* Single-dot icon */
+      .icon-single {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #555;
+      }
+
+      .toggle-btn.active .icon-single { background: var(--green); }
+
+      /* Four-dot icon */
+      .icon-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+      }
+
+      .icon-grid span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #555;
+      }
+
+      .toggle-btn.active .icon-grid span { background: var(--green); }
     </style>
   </head>
   <body>
     <div class="stage">
       <div id="panels"></div>
+      <div id="single-panel" class="panel">
+        <canvas id="single-canvas"></canvas>
+      </div>
       <div class="demo-notice" id="demo-notice">
         <strong>Demo mode</strong> — add a Finnhub API key in
         <code>config.js</code> for live data
       </div>
+    </div>
+
+    <div class="view-toggle">
+      <button id="btn-single" class="toggle-btn" title="Single ticker">
+        <div class="icon-single"></div>
+      </button>
+      <button id="btn-grid" class="toggle-btn active" title="All tickers">
+        <div class="icon-grid">
+          <span></span><span></span>
+          <span></span><span></span>
+        </div>
+      </button>
     </div>
 
     <script type="module" src="/src/main.js"></script>

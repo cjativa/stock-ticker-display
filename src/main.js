@@ -8,38 +8,38 @@ const COLS = 64;
 const ROWS = 32;
 const PANEL_COUNT = Math.min(config.tickers.length, 4);
 
-function calcPixelSize() {
-  // 2×2 grid: 1 gap column, 1 gap row, panel padding on each cell
-  const stagePadH = 32;  // 16px left + 16px right
-  const stagePadV = 32;  // 16px top + 16px bottom
-  const gap = 8;         // single gap between the two columns / rows
-  const panelPadH = 32;  // 16px left + 16px right per panel
-  const panelPadV = 20;  // 10px top + 10px bottom per panel
-
-  const availW = (window.innerWidth  - stagePadH - gap - panelPadH * 2) / 2;
-  const availH = (window.innerHeight - stagePadV - gap - panelPadV * 2) / 2;
-
-  const ps = Math.max(4, Math.min(
-    Math.floor(availW / COLS),
-    Math.floor(availH / ROWS)
-  ));
-  return { pixelSize: ps, dotRadius: Math.max(1.5, ps * 0.32) };
-}
-
 const COLOR_WHITE = '#f5f5f5';
 const COLOR_GREEN = '#22ff66';
-const COLOR_RED = '#ff3344';
-const COLOR_DIM = '#888888';
+const COLOR_RED   = '#ff3344';
+const COLOR_DIM   = '#888888';
 
 const LOGO_X = 1;
 const LOGO_Y = 1;
 const TEXT_X_WITH_LOGO = LOGO_X + LOGO_SIZE + 2;
 
-// Build one panel div + canvas per ticker
+// ── Pixel-size calculators ─────────────────────────────────────────────────
+
+function calcGridPixelSize() {
+  const stagePadH = 32, stagePadV = 32, gap = 8, panelPadH = 32, panelPadV = 20;
+  const availW = (window.innerWidth  - stagePadH - gap - panelPadH * 2) / 2;
+  const availH = (window.innerHeight - stagePadV - gap - panelPadV * 2 - 60) / 2;
+  const ps = Math.max(4, Math.min(Math.floor(availW / COLS), Math.floor(availH / ROWS)));
+  return { pixelSize: ps, dotRadius: Math.max(1.5, ps * 0.32) };
+}
+
+function calcSinglePixelSize() {
+  const availW = window.innerWidth  - 32;
+  const availH = window.innerHeight - 32 - 60; // 60px for button bar
+  const ps = Math.max(4, Math.min(Math.floor(availW / COLS), Math.floor(availH / ROWS)));
+  return { pixelSize: ps, dotRadius: Math.max(1.5, ps * 0.32) };
+}
+
+// ── Build grid panels ──────────────────────────────────────────────────────
+
 const panelsEl = document.getElementById('panels');
 panelsEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;';
 
-const { pixelSize, dotRadius } = calcPixelSize();
+const { pixelSize: gridPS, dotRadius: gridDR } = calcGridPixelSize();
 
 const matrices = config.tickers.slice(0, PANEL_COUNT).map(() => {
   const wrap = document.createElement('div');
@@ -47,8 +47,23 @@ const matrices = config.tickers.slice(0, PANEL_COUNT).map(() => {
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
   panelsEl.appendChild(wrap);
-  return new LEDMatrix(canvas, COLS, ROWS, { pixelSize, dotRadius });
+  return new LEDMatrix(canvas, COLS, ROWS, { pixelSize: gridPS, dotRadius: gridDR });
 });
+
+// ── Single-panel setup ─────────────────────────────────────────────────────
+
+const singlePanelEl = document.getElementById('single-panel');
+const singleCanvas  = document.getElementById('single-canvas');
+const { pixelSize: singlePS, dotRadius: singleDR } = calcSinglePixelSize();
+const singleMatrix = new LEDMatrix(singleCanvas, COLS, ROWS, { pixelSize: singlePS, dotRadius: singleDR });
+
+// ── View state ─────────────────────────────────────────────────────────────
+
+let mode = 'grid'; // 'grid' | 'single'
+let singleTickerIndex = 0;
+let singleRotationTimer = null;
+
+// ── Shared rendering ───────────────────────────────────────────────────────
 
 const latest = new Map();
 
@@ -62,79 +77,60 @@ function formatPct(p) {
   return `${sign}${p.toFixed(2)}%`;
 }
 
-function drawSparkline(buffer, history, color, x0, y0, width, height) {
+function drawSparkline(matrix, history, color, x0, y0, width, height) {
   if (history.length < 1) return;
   if (history.length === 1) {
-    // Draw a flat baseline until more data arrives
     const y = y0 + height - 1;
-    for (let col = 0; col < width; col++) buffer.setPixel(x0 + col, y, color);
+    for (let col = 0; col < width; col++) matrix.setPixel(x0 + col, y, color);
     return;
   }
   const min = Math.min(...history);
   const max = Math.max(...history);
   const range = max - min || 1;
-
   let prevY = null;
   for (let col = 0; col < width; col++) {
     const idx = Math.round((col / (width - 1)) * (history.length - 1));
-    const v = history[idx];
-    const norm = (v - min) / range;
+    const norm = (history[idx] - min) / range;
     const y = Math.round(y0 + height - 1 - norm * (height - 1));
-    for (let yy = y; yy < y0 + height; yy++) {
-      buffer.setPixel(x0 + col, yy, color);
-    }
+    for (let yy = y; yy < y0 + height; yy++) matrix.setPixel(x0 + col, yy, color);
     if (prevY !== null && Math.abs(prevY - y) > 1) {
-      const lo = Math.min(prevY, y);
-      const hi = Math.max(prevY, y);
-      for (let yy = lo; yy <= hi; yy++) {
-        buffer.setPixel(x0 + col - 1, yy, color);
-      }
+      const lo = Math.min(prevY, y), hi = Math.max(prevY, y);
+      for (let yy = lo; yy <= hi; yy++) matrix.setPixel(x0 + col - 1, yy, color);
     }
     prevY = y;
   }
 }
 
-function renderPanel(panelIndex, data) {
-  const matrix = matrices[panelIndex];
+// Core drawing — works on any LEDMatrix instance
+function drawTickerToMatrix(matrix, data) {
   matrix.clear();
-
   const changeColor = data.pctChange >= 0 ? COLOR_GREEN : COLOR_RED;
-
   const logoDrawn = drawLogo(matrix.buffer, data.ticker, LOGO_X, LOGO_Y);
   const textX = logoDrawn ? TEXT_X_WITH_LOGO : 1;
 
-  // Ticker symbol — top row, left
   drawText(matrix.buffer, data.ticker, textX, 1, COLOR_WHITE);
 
-  // Percent change — top row, right-aligned in smaller 3×5 font
-  // Vertically centered against the 7-tall ticker text
   const pctStr = formatPct(data.pctChange);
   const pctW = smallTextWidth(pctStr);
   const pctY = 1 + Math.floor((CHAR_HEIGHT - SMALL_CHAR_HEIGHT) / 2);
   drawSmallText(matrix.buffer, pctStr, COLS - pctW - 1, pctY, changeColor);
 
-  // Price — second row, left
   const priceStr = `$${formatPrice(data.price)}`;
   drawText(matrix.buffer, priceStr, textX, CHAR_HEIGHT + 3, COLOR_WHITE);
 
-  // Sparkline along the bottom
   const history = getHistory(data.ticker);
   const sparkY = CHAR_HEIGHT * 2 + 5;
   const sparkH = ROWS - sparkY - 1;
-  if (sparkH > 0) {
-    drawSparkline(matrix, history, changeColor, 1, sparkY, COLS - 2, sparkH);
-  }
+  if (sparkH > 0) drawSparkline(matrix, history, changeColor, 1, sparkY, COLS - 2, sparkH);
 
   matrix.render();
 }
 
-function renderLoading(panelIndex, message) {
-  const matrix = matrices[panelIndex];
+function drawLoadingToMatrix(matrix, message) {
   matrix.clear();
   const w = textWidth(message);
   drawText(
-    matrix.buffer,
-    message,
+    matrix.buffer, message,
     Math.max(1, Math.floor((COLS - w) / 2)),
     Math.floor((ROWS - CHAR_HEIGHT) / 2),
     COLOR_DIM
@@ -142,7 +138,65 @@ function renderLoading(panelIndex, message) {
   matrix.render();
 }
 
-// Per-ticker fetch loop — each renders into its own panel
+// ── Grid-mode render helpers ───────────────────────────────────────────────
+
+function renderPanel(panelIndex, data) {
+  drawTickerToMatrix(matrices[panelIndex], data);
+  // Keep single panel live if the active ticker just refreshed
+  if (mode === 'single' && config.tickers[singleTickerIndex] === data.ticker) {
+    drawTickerToMatrix(singleMatrix, data);
+  }
+}
+
+function renderLoading(panelIndex, message) {
+  drawLoadingToMatrix(matrices[panelIndex], message);
+}
+
+// ── Single-mode helpers ────────────────────────────────────────────────────
+
+function renderSingleCurrent() {
+  const ticker = config.tickers[singleTickerIndex];
+  const data = latest.get(ticker);
+  if (data) drawTickerToMatrix(singleMatrix, data);
+  else drawLoadingToMatrix(singleMatrix, ticker);
+}
+
+function enterSingleView() {
+  mode = 'single';
+  panelsEl.style.display = 'none';
+  singlePanelEl.style.display = 'flex';
+  renderSingleCurrent();
+  singleRotationTimer = setInterval(() => {
+    singleTickerIndex = (singleTickerIndex + 1) % config.tickers.length;
+    renderSingleCurrent();
+  }, config.rotationSeconds * 1000);
+  document.getElementById('btn-single').classList.add('active');
+  document.getElementById('btn-grid').classList.remove('active');
+}
+
+function enterGridView() {
+  mode = 'grid';
+  clearInterval(singleRotationTimer);
+  singleRotationTimer = null;
+  singlePanelEl.style.display = 'none';
+  panelsEl.style.display = 'grid';
+  config.tickers.slice(0, PANEL_COUNT).forEach((ticker, i) => {
+    const data = latest.get(ticker);
+    if (data) drawTickerToMatrix(matrices[i], data);
+  });
+  document.getElementById('btn-grid').classList.add('active');
+  document.getElementById('btn-single').classList.remove('active');
+}
+
+document.getElementById('btn-single').addEventListener('click', () => {
+  if (mode !== 'single') enterSingleView();
+});
+document.getElementById('btn-grid').addEventListener('click', () => {
+  if (mode !== 'grid') enterGridView();
+});
+
+// ── Data fetch loops ───────────────────────────────────────────────────────
+
 async function refreshLoop(ticker, panelIndex) {
   while (true) {
     const data = await fetchTicker(ticker);
@@ -154,21 +208,18 @@ async function refreshLoop(ticker, panelIndex) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Boot — show loading state on each panel, then start fetch loops
+// ── Boot ───────────────────────────────────────────────────────────────────
+
 config.tickers.slice(0, PANEL_COUNT).forEach((ticker, i) => {
   renderLoading(i, ticker);
 
-  // Load historical candles so the sparkline is populated immediately
   preloadHistory(ticker).then(() => {
     const data = latest.get(ticker);
     if (data) renderPanel(i, data);
   });
 
-  // Load logo, re-render if price data already arrived
   fetchProfile(ticker).then(profile =>
     preloadLogo(ticker, profile?.logo).then(() => {
       const data = latest.get(ticker);
