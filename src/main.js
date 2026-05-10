@@ -5,7 +5,7 @@ import { drawLogo, preloadLogo, LOGO_SIZE } from './logos.js';
 import { fetchTicker, fetchProfile, preloadHistory, getHistory } from './data.js';
 
 const COLS = 64;
-const ROWS = 32;
+const ROWS = 37;
 const PANEL_COUNT = Math.min(config.tickers.length, 4);
 
 const COLOR_WHITE = '#f5f5f5';
