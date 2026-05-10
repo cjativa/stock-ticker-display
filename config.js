@@ -5,7 +5,7 @@ export const config = {
   finnhubApiKey: 'd7vrenpr01qj3ct84ue0d7vrenpr01qj3ct84ueg',
 
   // Tickers to cycle through. Add or remove as you like.
-  tickers: ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'GOOGL'],
+  tickers: ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'SPY', 'QQQ', 'IWM', 'GLD'],
 
   // How long to show each ticker before rotating (seconds)
   rotationSeconds: 8,

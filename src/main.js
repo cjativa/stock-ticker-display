@@ -6,7 +6,8 @@ import { fetchTicker, fetchProfile, preloadHistory, getHistory } from './data.js
 
 const COLS = 64;
 const ROWS = 37;
-const PANEL_COUNT = Math.min(config.tickers.length, 4);
+const PAGE_SIZE = 4;
+const PAGE_COUNT = Math.ceil(config.tickers.length / PAGE_SIZE);
 
 const COLOR_WHITE = '#f5f5f5';
 const COLOR_GREEN = '#22ff66';
@@ -43,7 +44,7 @@ panelsEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px;wid
 
 const { pixelSize: gridPS, dotRadius: gridDR } = calcGridPixelSize();
 
-const matrices = config.tickers.slice(0, PANEL_COUNT).map(() => {
+const matrices = Array.from({ length: PAGE_SIZE }, () => {
   const wrap = document.createElement('div');
   wrap.className = 'panel';
   const canvas = document.createElement('canvas');
@@ -62,8 +63,18 @@ const singleMatrix = new LEDMatrix(singleCanvas, COLS, ROWS, { pixelSize: single
 // ── View state ─────────────────────────────────────────────────────────────
 
 let mode = 'grid'; // 'grid' | 'single'
+let currentPage = 0;
 let singleTickerIndex = 0;
 let singleRotationTimer = null;
+let pageRotationTimer = null;
+
+function pageTickerIndex(panelIndex) {
+  return currentPage * PAGE_SIZE + panelIndex;
+}
+
+function tickerForPanel(panelIndex) {
+  return config.tickers[pageTickerIndex(panelIndex)];
+}
 
 // ── Shared rendering ───────────────────────────────────────────────────────
 
@@ -142,16 +153,49 @@ function drawLoadingToMatrix(matrix, message) {
 
 // ── Grid-mode render helpers ───────────────────────────────────────────────
 
-function renderPanel(panelIndex, data) {
-  drawTickerToMatrix(matrices[panelIndex], data);
+function renderPanel(ticker, data) {
+  // Find which panel this ticker occupies on the current page
+  const tickerIdx = config.tickers.indexOf(ticker);
+  const panelIndex = tickerIdx - currentPage * PAGE_SIZE;
+  if (panelIndex >= 0 && panelIndex < PAGE_SIZE) {
+    drawTickerToMatrix(matrices[panelIndex], data);
+  }
   // Keep single panel live if the active ticker just refreshed
-  if (mode === 'single' && config.tickers[singleTickerIndex] === data.ticker) {
+  if (mode === 'single' && config.tickers[singleTickerIndex] === ticker) {
     drawTickerToMatrix(singleMatrix, data);
   }
 }
 
-function renderLoading(panelIndex, message) {
-  drawLoadingToMatrix(matrices[panelIndex], message);
+// ── Page switching ─────────────────────────────────────────────────────────
+
+function flipPage(newPage) {
+  currentPage = newPage;
+  updatePageBar();
+  for (let i = 0; i < PAGE_SIZE; i++) {
+    const ticker = tickerForPanel(i);
+    if (!ticker) continue;
+    const data = latest.get(ticker);
+    if (data) drawTickerToMatrix(matrices[i], data);
+    else drawLoadingToMatrix(matrices[i], ticker);
+  }
+}
+
+function updatePageBar() {
+  document.querySelectorAll('.page-segment').forEach((seg, i) => {
+    seg.classList.toggle('active', i === currentPage);
+  });
+}
+
+function startPageRotation() {
+  stopPageRotation();
+  pageRotationTimer = setInterval(() => {
+    flipPage((currentPage + 1) % PAGE_COUNT);
+  }, config.rotationSeconds * 1000);
+}
+
+function stopPageRotation() {
+  clearInterval(pageRotationTimer);
+  pageRotationTimer = null;
 }
 
 // ── Single-mode helpers ────────────────────────────────────────────────────
@@ -165,8 +209,10 @@ function renderSingleCurrent() {
 
 function enterSingleView() {
   mode = 'single';
+  stopPageRotation();
   panelsEl.style.display = 'none';
   singlePanelEl.style.display = 'flex';
+  document.getElementById('page-bar').style.display = 'none';
   renderSingleCurrent();
   singleRotationTimer = setInterval(() => {
     singleTickerIndex = (singleTickerIndex + 1) % config.tickers.length;
@@ -182,10 +228,14 @@ function enterGridView() {
   singleRotationTimer = null;
   singlePanelEl.style.display = 'none';
   panelsEl.style.display = 'grid';
-  config.tickers.slice(0, PANEL_COUNT).forEach((ticker, i) => {
+  document.getElementById('page-bar').style.display = 'flex';
+  for (let i = 0; i < PAGE_SIZE; i++) {
+    const ticker = tickerForPanel(i);
+    if (!ticker) continue;
     const data = latest.get(ticker);
     if (data) drawTickerToMatrix(matrices[i], data);
-  });
+  }
+  startPageRotation();
   document.getElementById('btn-grid').classList.add('active');
   document.getElementById('btn-single').classList.remove('active');
 }
@@ -199,12 +249,12 @@ document.getElementById('btn-grid').addEventListener('click', () => {
 
 // ── Data fetch loops ───────────────────────────────────────────────────────
 
-async function refreshLoop(ticker, panelIndex) {
+async function refreshLoop(ticker) {
   while (true) {
     const data = await fetchTicker(ticker);
     if (data) {
       latest.set(ticker, data);
-      renderPanel(panelIndex, data);
+      renderPanel(ticker, data);
     }
     await sleep(config.refreshSeconds * 1000);
   }
@@ -214,23 +264,48 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
-config.tickers.slice(0, PANEL_COUNT).forEach((ticker, i) => {
-  renderLoading(i, ticker);
+// Render loading state for first page
+for (let i = 0; i < PAGE_SIZE; i++) {
+  const ticker = tickerForPanel(i);
+  if (ticker) drawLoadingToMatrix(matrices[i], ticker);
+}
 
+// Preload history and logos for ALL tickers; start ALL refresh loops
+config.tickers.forEach((ticker, i) => {
   preloadHistory(ticker).then(() => {
     const data = latest.get(ticker);
-    if (data) renderPanel(i, data);
+    if (data) renderPanel(ticker, data);
   });
 
   fetchProfile(ticker).then(profile =>
     preloadLogo(ticker, profile?.logo).then(() => {
       const data = latest.get(ticker);
-      if (data) renderPanel(i, data);
+      if (data) renderPanel(ticker, data);
     })
   );
 
-  setTimeout(() => refreshLoop(ticker, i), i * 250);
+  setTimeout(() => refreshLoop(ticker), i * 250);
 });
+
+// Build segmented page bar
+const pageBarEl = document.getElementById('page-bar');
+for (let p = 0; p < PAGE_COUNT; p++) {
+  const seg = document.createElement('div');
+  seg.className = 'page-segment' + (p === 0 ? ' active' : '');
+  seg.title = `Page ${p + 1}`;
+  seg.addEventListener('click', () => {
+    if (mode === 'grid') {
+      stopPageRotation();
+      flipPage(p);
+      startPageRotation();
+    }
+  });
+  pageBarEl.appendChild(seg);
+}
+
+// Show page bar and start auto-cycle (grid is the initial view)
+pageBarEl.style.display = 'flex';
+startPageRotation();
 
 if (!config.finnhubApiKey || config.finnhubApiKey === 'YOUR_API_KEY_HERE') {
   document.getElementById('demo-notice').style.display = 'block';
