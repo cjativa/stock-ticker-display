@@ -20,16 +20,18 @@ const TEXT_X_WITH_LOGO = LOGO_X + LOGO_SIZE + 2;
 // ── Pixel-size calculators ─────────────────────────────────────────────────
 
 function calcGridPixelSize() {
-  const stagePadH = 32, stagePadV = 32, gap = 8, panelPadH = 32, panelPadV = 20;
+  // stage padding 4px each side → 8px total; panel padding 4px each side → 8px total;
+  // 1 gap of 4px between columns/rows; 44px button bar
+  const stagePadH = 8, stagePadV = 8, gap = 4, panelPadH = 8, panelPadV = 8;
   const availW = (window.innerWidth  - stagePadH - gap - panelPadH * 2) / 2;
-  const availH = (window.innerHeight - stagePadV - gap - panelPadV * 2 - 60) / 2;
+  const availH = (window.innerHeight - stagePadV - gap - panelPadV * 2) / 2;
   const ps = Math.max(4, Math.min(Math.floor(availW / COLS), Math.floor(availH / ROWS)));
   return { pixelSize: ps, dotRadius: Math.max(1.5, ps * 0.32) };
 }
 
 function calcSinglePixelSize() {
-  const availW = window.innerWidth  - 32;
-  const availH = window.innerHeight - 32 - 60; // 60px for button bar
+  const availW = window.innerWidth  - 8;
+  const availH = window.innerHeight - 8;
   const ps = Math.max(4, Math.min(Math.floor(availW / COLS), Math.floor(availH / ROWS)));
   return { pixelSize: ps, dotRadius: Math.max(1.5, ps * 0.32) };
 }
@@ -37,7 +39,7 @@ function calcSinglePixelSize() {
 // ── Build grid panels ──────────────────────────────────────────────────────
 
 const panelsEl = document.getElementById('panels');
-panelsEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;';
+panelsEl.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;';
 
 const { pixelSize: gridPS, dotRadius: gridDR } = calcGridPixelSize();
 
